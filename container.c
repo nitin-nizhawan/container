@@ -133,6 +133,12 @@ int mounts(struct child_config *config)
 		fprintf(stderr, "rmdir failed! %m\n");
 		return -1;
 	}
+	mkdir("/proc",S_IRUSR|S_IXUSR|S_IRGRP|S_IXGRP|S_IXOTH|S_IROTH);
+	if (mount("proc", "/proc", "proc", 0, NULL)) {
+		fprintf(stderr, "proc mount failed!%m\n");
+		return -1;
+	}
+
 	fprintf(stderr, "done.\n");
 	return 0;
 }
@@ -480,33 +486,19 @@ int choose_hostname(char *buff, size_t len)
 }
 int main (int argc, char **argv)
 {
+	char* img_path = argv[2];
+	char* binary = argv[3];
 	struct child_config config = {0};
 	int err = 0;
 	int option = 0;
 	int sockets[2] = {0};
 	pid_t child_pid = 0;
 	int last_optind = 0;
-	while ((option = getopt(argc, argv, "c:m:u:"))) {
-		switch (option) {
-		case 'c':
-			config.argc = argc - last_optind - 1;
-			config.argv = &argv[argc - config.argc];
-			goto finish_options;
-		case 'm':
-			config.mount_dir = optarg;
-			break;
-		case 'u':
-			if (sscanf(optarg, "%d", &config.uid) != 1) {
-				fprintf(stderr, "badly-formatted uid: %s\n", optarg);
-				goto usage;
-			}
-			break;
-		default:
-			goto usage;
-		}
-		last_optind = optind;
-	}
-finish_options:
+	config.mount_dir = argv[2];
+	config.uid=0;
+	config.argc = argc - 3;
+	config.argv = &argv[3];
+
 	if (!config.argc) goto usage;
 	if (!config.mount_dir) goto usage;
 
