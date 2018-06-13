@@ -1,1 +1,1 @@
-./compilego.sh && ./dock run busybox-img /bin/busybox sh
+./compilego.sh && sudo ./dock run bash.tar  usr/local/bin/bash
