@@ -89,7 +89,6 @@ func Untar(dst string, r io.Reader) error {
 		// the target location where the dir/file should be created
 		target := dst+"/"+header.Name;//filepath.Join(dst, header.Name)
 
-			fmt.Println("processing "+target)
 		// the following switch could also be done using fi.Mode(), not sure if there
 		// a benefit of using one vs. the other.
 		// fi := header.FileInfo()
@@ -118,16 +117,31 @@ func Untar(dst string, r io.Reader) error {
 				return err
 			}
 		case tar.TypeSymlink:
-			fmt.Println("Name : "+target);
-			fmt.Println("LinkName : "+header.Linkname);
 			os.Symlink(header.Linkname,target)
 		}
 
 	}
 }
 
-
-func untarDockerImage(tarfile string,dest string){
+func readJson(file string) interface{} {
+	raw, _ := ioutil.ReadFile(file)
+	var c interface{}
+	json.Unmarshal(raw,&c)
+        return c
+}
+type ContainerSpec struct {
+	Env []string
+	Cmd []string
+	Entrypoint string
+}
+func objArrayToStrArray(objArray []interface{}) []string{
+	strArray := make([]string,len(objArray))
+	for i:=0;i<len(objArray);i++ {
+           strArray[i] = objArray[i].(string)
+	}
+	return strArray;
+}
+func untarDockerImage(tarfile string,dest string) *ContainerSpec{
 	fmt.Println("docker tar :"+tarfile)
 	t1,_ := ioutil.TempDir("","dock");
 	fmt.Println("untaring docker image to :"+t1)
@@ -135,13 +149,23 @@ func untarDockerImage(tarfile string,dest string){
 	defer tarfilereader.Close()
 
         Untar(t1,tarfilereader) 
-	raw, _ := ioutil.ReadFile(t1+"/manifest.json")
+	/*raw, _ := ioutil.ReadFile(t1+"/manifest.json")
 	var c []interface{}
-	json.Unmarshal(raw,&c)
-
-	obj :=  c[0].(map[string]interface{})
+	json.Unmarshal(raw,&c)*/
+        obj := readJson(t1+"/manifest.json").([]interface{})[0].(map[string]interface{})
+	//obj :=  c[0].(map[string]interface{})
 	layerIds := obj["Layers"].([]interface{})
-        
+	ConfigFile := obj["Config"].(string)
+        configFileJson := readJson(t1+"/"+ConfigFile).(map[string]interface{})
+	configObj := configFileJson["config"].(map[string]interface{})
+        entryPoint := configObj["Entrypoint"].([]interface{})[0].(string)
+	env := objArrayToStrArray(configObj["Env"].([]interface{}))
+	Cmd := objArrayToStrArray(configObj["Cmd"].([]interface{}))
+        spec := &ContainerSpec {
+		Env:env,
+		Cmd:Cmd,
+		Entrypoint:entryPoint,
+        }
 	fmt.Println(layerIds)
 	for i := range layerIds {
 		filep := t1+"/"+layerIds[i].(string)
@@ -151,17 +175,29 @@ func untarDockerImage(tarfile string,dest string){
 	  Untar(dest,t)
 	}
 
-	
+       return	spec
 }
 func child() {
 	tempDir,_ := ioutil.TempDir("","dock");
 	fmt.Println("TempDir :"+tempDir);
+       
+	spec := &ContainerSpec{
+		Cmd:make([]string,0),
+		Env:[]string{"PATH=/bin"},
+		Entrypoint:"",
+	}
+	if(len(os.Args) > 3){
+		spec.Cmd = os.Args[3:]
+        }
 	if strings.Index(os.Args[2],".tar") > -1 {
             // untar(os.Args[2],tempDir);
-	    untarDockerImage(os.Args[2],tempDir)
+	    spec = untarDockerImage(os.Args[2],tempDir)
 	must(syscall.Mount(tempDir, tempDir, "", syscall.MS_BIND | syscall.MS_PRIVATE, ""))
 	} else {
  	  syscall.Mount(os.Args[2],tempDir,"",syscall.MS_BIND | syscall.MS_PRIVATE,"");
+        }
+	if(len(os.Args) > 3){
+		spec.Cmd = os.Args[3:]
         }
 	must(os.MkdirAll(tempDir+"/proc", 0700))
 	must(syscall.Mount("proc",tempDir+"/proc","proc",0,""));
@@ -170,7 +206,10 @@ func child() {
 	must(os.Chdir("/"))
         syscall.Unmount("oldrootfs",syscall.MNT_DETACH)
 	os.RemoveAll("oldrootfs")
-	cmd := exec.Command(os.Args[3], os.Args[4:]...)
+	fmt.Println("Entrypoint :"+spec.Entrypoint)
+	fmt.Println("Cmd :"+strings.Join(spec.Cmd[:],","))
+	cmd := exec.Command(spec.Entrypoint, spec.Cmd...)
+	cmd.Env = spec.Env
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
