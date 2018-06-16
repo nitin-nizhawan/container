@@ -10,13 +10,15 @@ import (
 	"archive/tar"
 	"strings"
 	"encoding/json"
+	"time"
+//	"strconv"
 )
 
 func main() {
 	switch os.Args[1] {
 	case "run":
 		parent()
-	case "child":
+	case "launch":
 		child()
 	default:
 		panic("wat should I do")
@@ -28,9 +30,9 @@ func parent() {
 	fmt.Println(os.Args[0])
 	fmt.Println(os.Args[1])
 	fmt.Println(os.Args[2])
-	cmd := exec.Command(os.Args[0], append([]string{"child"}, os.Args[2:]...)...)
+	cmd := exec.Command(os.Args[0], append([]string{"launch"}, os.Args[2:]...)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS,
+		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS | syscall.CLONE_NEWNET | syscall.CLONE_NEWIPC ,
 UidMappings: []syscall.SysProcIDMap{
 			{
 				ContainerID: 0,
@@ -178,6 +180,8 @@ func untarDockerImage(tarfile string,dest string) *ContainerSpec{
        return	spec
 }
 func child() {
+	hostName := "root"+fmt.Sprintf("%v",time.Now().UnixNano());
+	syscall.Sethostname([]byte(hostName))
 	tempDir,_ := ioutil.TempDir("","dock");
 	fmt.Println("TempDir :"+tempDir);
        
