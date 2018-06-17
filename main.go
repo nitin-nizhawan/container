@@ -118,6 +118,7 @@ func Untar(dst string, r io.Reader) error {
 			if _, err := io.Copy(f, tr); err != nil {
 				return err
 			}
+			f.Close()
 		case tar.TypeSymlink:
 			os.Symlink(header.Linkname,target)
 		}
@@ -160,7 +161,10 @@ func untarDockerImage(tarfile string,dest string) *ContainerSpec{
 	ConfigFile := obj["Config"].(string)
         configFileJson := readJson(t1+"/"+ConfigFile).(map[string]interface{})
 	configObj := configFileJson["config"].(map[string]interface{})
-        entryPoint := configObj["Entrypoint"].([]interface{})[0].(string)
+	var entryPoint string = ""
+	if configObj["Entrypoint"] != nil{
+           entryPoint = configObj["Entrypoint"].([]interface{})[0].(string)
+        }
 	env := objArrayToStrArray(configObj["Env"].([]interface{}))
 	Cmd := objArrayToStrArray(configObj["Cmd"].([]interface{}))
         spec := &ContainerSpec {
@@ -212,7 +216,12 @@ func child() {
 	os.RemoveAll("oldrootfs")
 	fmt.Println("Entrypoint :"+spec.Entrypoint)
 	fmt.Println("Cmd :"+strings.Join(spec.Cmd[:],","))
-	cmd := exec.Command(spec.Entrypoint, spec.Cmd...)
+        var cmd *exec.Cmd
+	if spec.Entrypoint != ""{
+	   cmd = exec.Command(spec.Entrypoint, spec.Cmd...)
+        }   else {
+		cmd = exec.Command(spec.Cmd[0], spec.Cmd[1:]...)
+	}
 	cmd.Env = spec.Env
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
