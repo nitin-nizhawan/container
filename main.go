@@ -37,16 +37,17 @@ UidMappings: []syscall.SysProcIDMap{
 			{
 				ContainerID: 0,
 				HostID:      os.Getuid(),
-				Size:        1,
+				Size:        75000,
 			},
 		},
 		GidMappings: []syscall.SysProcIDMap{
 			{
 				ContainerID: 0,
 				HostID:      os.Getgid(),
-				Size:        1,
+				Size:        75000,
 			},
 		},
+		GidMappingsEnableSetgroups:true,
 	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
