@@ -11,25 +11,105 @@ import (
 	"strings"
 	"encoding/json"
 	"time"
-//	"strconv"
+	"strconv"
+// network setup
+        "code.cloudfoundry.org/guardian/kawasaki/netns"
+	"github.com/teddyking/netsetgo"
+	"github.com/teddyking/netsetgo/configurer"
+	"github.com/teddyking/netsetgo/device" 
+	"net"
 )
 
 func main() {
 	switch os.Args[1] {
 	case "run":
-		parent()
+		handle_run()
 	case "launch":
-		child()
+		handle_launch()
 	default:
 		panic("wat should I do")
 	}
 }
 
-func parent() {
+func waitForNetwork() error {
+	maxWait := time.Second * 3
+	checkInterval := time.Second
+	timeStarted := time.Now()
+
+	for {
+		interfaces, err := net.Interfaces()
+		if err != nil {
+			return err
+		}
+		//sysctl -p /etc/sysctl.conf
+		//sudo sysctl -w net.ipv4.ip_forward=1
+		//sudo iptables -A FORWARD -o eth0 -i brg0 -j ACCEPT
+//sudo iptables -A FORWARD -i eth0 -o brg0  -j ACCEPT
+		// pretty basic check ...
+		// > 1 as a lo device will already exist
+		if len(interfaces) > 1 {
+			// configure masquerading
+		        //sudo sysctl -w net.ipv4.ip_forward=1
+			//sudo iptables -t nat -A POSTROUTING -s 10.10.10.0/255.255.255.0 -o eth0 -j MASQUERADE
+			return nil
+		}
+
+		if time.Since(timeStarted) > maxWait {
+			return fmt.Errorf("Timeout after %s waiting for network", maxWait)
+		}
+
+		time.Sleep(checkInterval)
+	}
+	return nil
+}
+
+func setupNetwork(pid int){
+
+var bridgeName, bridgeAddress, containerAddress, vethNamePrefix string
+bridgeName = "brg0"
+bridgeAddress = "10.10.10.1/24"
+vethNamePrefix = "veth"
+containerAddress = "10.10.10.2/24"
+
+
+	if pid == 0 {
+		fmt.Println("ERROR - netsetgo needs a pid")
+		os.Exit(1)
+	}
+
+	bridgeCreator := device.NewBridge()
+	vethCreator := device.NewVeth()
+	netnsExecer := &netns.Execer{}
+
+	hostConfigurer := configurer.NewHostConfigurer(bridgeCreator, vethCreator)
+	containerConfigurer := configurer.NewContainerConfigurer(netnsExecer)
+	netset := netsetgo.New(hostConfigurer, containerConfigurer)
+
+	bridgeIP, bridgeSubnet, err := net.ParseCIDR(bridgeAddress)
+	must(err)
+
+	containerIP, _, err := net.ParseCIDR(containerAddress)
+	must(err)
+
+	netConfig := netsetgo.NetworkConfig{
+		BridgeName:     bridgeName,
+		BridgeIP:       bridgeIP,
+		ContainerIP:    containerIP,
+		Subnet:         bridgeSubnet,
+		VethNamePrefix: vethNamePrefix,
+	}
+
+	must(netset.ConfigureHost(netConfig, pid))
+	must(netset.ConfigureContainer(netConfig, pid))	 
+	fmt.Println("Done setting up network \n")
+}
+func handle_run() {
 
 	fmt.Println(os.Args[0])
 	fmt.Println(os.Args[1])
 	fmt.Println(os.Args[2])
+	fmt.Println("Uid : "+strconv.Itoa(os.Getuid()))
+	fmt.Println("Gid : "+strconv.Itoa(os.Getgid()))
 	cmd := exec.Command(os.Args[0], append([]string{"launch"}, os.Args[2:]...)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS | syscall.CLONE_NEWNET | syscall.CLONE_NEWIPC ,
@@ -53,7 +133,16 @@ UidMappings: []syscall.SysProcIDMap{
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	if err := cmd.Run(); err != nil {
+        if err := cmd.Start(); err!=nil {
+		fmt.Println("ERRO",err)
+		os.Exit(1)
+	}
+
+
+	setupNetwork(cmd.Process.Pid)
+
+
+	if err := cmd.Wait(); err != nil {
 		fmt.Println("ERROR", err)
 		os.Exit(1)
 	}
@@ -173,9 +262,10 @@ func untarDockerImage(tarfile string,dest string) *ContainerSpec{
 		Cmd:Cmd,
 		Entrypoint:entryPoint,
         }
+	layerIdLen := len(layerIds)
 	fmt.Println(layerIds)
 	for i := range layerIds {
-		filep := t1+"/"+layerIds[i].(string)
+		filep := t1+"/"+layerIds[layerIdLen-i-1].(string)
 		fmt.Println(" Extracting "+filep)
 		t, _ :=os.Open(filep)
 		defer t.Close()
@@ -184,7 +274,7 @@ func untarDockerImage(tarfile string,dest string) *ContainerSpec{
 
        return	spec
 }
-func child() {
+func handle_launch() {
 	hostName := "root"+fmt.Sprintf("%v",time.Now().UnixNano());
 	syscall.Sethostname([]byte(hostName))
 	tempDir,_ := ioutil.TempDir("","dock");
@@ -217,6 +307,7 @@ func child() {
 	os.RemoveAll("oldrootfs")
 	fmt.Println("Entrypoint :"+spec.Entrypoint)
 	fmt.Println("Cmd :"+strings.Join(spec.Cmd[:],","))
+	must(waitForNetwork())
         var cmd *exec.Cmd
 	if spec.Entrypoint != ""{
 	   cmd = exec.Command(spec.Entrypoint, spec.Cmd...)
